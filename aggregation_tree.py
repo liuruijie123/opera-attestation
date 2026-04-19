@@ -5,7 +5,7 @@ import os
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
-# ---------- 1. BloomFilter 实现 ----------
+
 class BloomFilter:
     def __init__(self, expected_elements: int, false_positive_rate: float):
         self.n = expected_elements
@@ -49,7 +49,7 @@ class BloomFilter:
     def to_bytes(self) -> bytes:
         return bytes(self.bits)
 
-# ---------- 2. CRCS 实现 ----------
+
 from ecdsa import SECP256k1
 from ecdsa.ellipticcurve import Point
 
@@ -179,7 +179,7 @@ class CRCS:
             valid = (left == right)
         return valid, D_dict
 
-# ---------- 3. 树节点 ----------
+
 class TreeNode:
     def __init__(self, node_id: str, parent=None):
         self.node_id = node_id
@@ -189,7 +189,7 @@ class TreeNode:
         self.sk = None
         self.pk = None
         self.config = None
-        self.good_bf = None   # 存储布隆过滤器对象（仅叶子需要）
+        self.good_bf = None   
         self.challenge = None
         self.r = None
         self.R = None
@@ -265,20 +265,19 @@ def broadcast_aggregated_commitment(node: TreeNode, R_A):
 
 def collect_partial_signatures(node, M, crcs):
     if not node.is_aggregator:
-        # 叶子节点
-        # 注意：M 已经包含了新鲜性（如 nonce + counter），合规设备直接使用 M
+
         if node.config in node.good_bf:
-            msg = M   # 合规：签名默认消息 M
+            msg = M   
         else:
-            # 非合规：签名自己的配置 BloomFilter，并确保不与 M 相同
+   
             bf_self = BloomFilter(1, 0.001)
             bf_self.add(node.config)
-            # 可以加上 nonce 等，但必须保证不等于 M
+
             msg = bf_self.to_bytes() + node.nonce
         tau, D = crcs.psign(node.sk, node.r, node.R_A, msg, M)
         return [(tau, D)]
     else:
-        # 内部节点聚合
+
         child_partials = []
         for ch in node.children:
             child_partials.extend(collect_partial_signatures(ch, M, crcs))
@@ -294,21 +293,21 @@ def collect_public_keys(node: TreeNode, pk_list: list):
         for child in node.children:
             collect_public_keys(child, pk_list)
 
-# ---------- 4. 主模拟 ----------
+
 def run_attestation(num_leaves: int = 16, branch: int = 4):
     crcs = CRCS()
-    # 构建树
+
     root = build_quadtree(num_leaves, branch)
-    # 创建合法配置集的 BloomFilter
+
     good_configs_list = [b"config_v1", b"config_v2", b"config_v3"]
     bf_good = BloomFilter(len(good_configs_list), 0.001)
     for cfg in good_configs_list:
         bf_good.add(cfg)
-    # 分配密钥和配置（直接传递 bf_good 对象）
+
     assign_keys_and_configs(root, bf_good, crcs)
-    # 默认消息
+
     M = b"default_attestation_message"
-    # 挑战随机数
+
     challenge = b"fresh_nonce_12345678"
     print("=== Starting Attestation ===")
     print("Broadcasting challenge...")
@@ -320,13 +319,13 @@ def run_attestation(num_leaves: int = 16, branch: int = 4):
     broadcast_aggregated_commitment(root, R_A)
     print("Collecting partial signatures...")
     partials = collect_partial_signatures(root, M, crcs)
-    tau_agg, D_agg = partials[0]  # 根节点返回的聚合签名
+    tau_agg, D_agg = partials[0]  
     print("Aggregated signature ready.")
-    # 收集所有公钥并计算聚合公钥
+
     all_pks = []
     collect_public_keys(root, all_pks)
     apk = crcs.apk(all_pks)
-    # 验证
+
     valid, result_D = crcs.vrfy(apk, (tau_agg, D_agg), M, R_A, S_perp=[])
     print(f"\nVerification result: {valid}")
     if valid:
