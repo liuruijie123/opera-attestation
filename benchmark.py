@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# benchmark.py - 性能测试脚本（使用高性能版协议）
+
 
 import time
 import csv
@@ -9,9 +9,7 @@ import multiprocessing
 from opera_protocol import run_full_attestation
 
 def benchmark_scalability(sizes, repeats=3, branch=4, mal_ratio=0.0, max_workers=None):
-    """
-    测试不同设备数量下的在线认证时间（全合规场景）
-    """
+
     results = []
     for n in sizes:
         print(f"\n=== Scalability: {n} devices (mal_ratio={mal_ratio}) ===")
@@ -53,13 +51,13 @@ if __name__ == "__main__":
     max_workers = multiprocessing.cpu_count()
     print(f"Using {max_workers} threads for parallel operations")
 
-    # 测试不同规模（全合规）
+
     sizes = [16, 64, 256, 1024, 4096]
     results = benchmark_scalability(sizes, repeats=3, branch=4, mal_ratio=0.0, max_workers=max_workers)
     save_results_to_csv(results, "scalability_all_compliant.csv")
     print("\nResults saved to results/scalability_all_compliant.csv")
 
-    # 可选：测试恶意节点比例（固定1024设备）
+
     # mal_ratios = [0.0, 0.1, 0.2, 0.33]
     # for r in mal_ratios:
     #     results_mal = benchmark_scalability([1024], repeats=3, mal_ratio=r, max_workers=max_workers)
