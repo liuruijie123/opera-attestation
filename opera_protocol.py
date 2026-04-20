@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # opera_protocol.py
-# 高性能版 Opera 协议：使用 coincurve (C 绑定) + 线程池并行化
+
 
 import os
 import time
@@ -16,39 +16,39 @@ import coincurve
 from ecdsa import SECP256k1
 from ecdsa.ellipticcurve import Point
 
-# 复用原有模块
+
 from bloom_filter import BloomFilter
 from token_issuance import NetworkOwner, Verifier, Token
 
-# ------------------------------ 1. 高性能 CRCS (基于 coincurve) ------------------------------
+
 def _pk_to_ecdsa_point(pk: coincurve.PublicKey) -> Point:
-    """将 coincurve 公钥转换为 ecdsa 点对象（用于点加法）"""
+
     uncompressed = pk.format(compressed=False)
     x = int.from_bytes(uncompressed[1:33], 'big')
     y = int.from_bytes(uncompressed[33:65], 'big')
     return Point(SECP256k1.curve, x, y)
 
 def _ecdsa_point_to_pk(pt: Point) -> coincurve.PublicKey:
-    """将 ecdsa 点对象转换为 coincurve 公钥"""
+
     x_bytes = pt.x().to_bytes(32, 'big')
     y_bytes = pt.y().to_bytes(32, 'big')
     combined = b'\x04' + x_bytes + y_bytes
     return coincurve.PublicKey(combined)
 
 class CRCSFastCoincurve:
-    """基于 coincurve 的高性能 CRCS 实现"""
+
     def __init__(self):
         self.order = SECP256k1.order   # 曲线阶
         self.hash_func = hashlib.sha256
 
     def _point_to_bytes(self, point: coincurve.PublicKey, compressed=True) -> bytes:
-        """将公钥转为字节串"""
+
         if point is None:
             return b'\x00'
         return point.format(compressed=compressed)
 
     def _hash_to_scalar(self, *args) -> int:
-        """将任意参数哈希后映射到 [0, order-1] 范围内的标量"""
+
         h = self.hash_func()
         for arg in args:
             if isinstance(arg, coincurve.PublicKey):
@@ -65,19 +65,19 @@ class CRCSFastCoincurve:
         return int.from_bytes(digest, 'big') % self.order
 
     def kgen(self) -> Tuple[bytes, coincurve.PublicKey]:
-        """密钥生成 (sk, pk)"""
+
         sk = os.urandom(32)
         pk = coincurve.PublicKey.from_secret(sk)
         return sk, pk
 
     def cgen(self) -> Tuple[bytes, coincurve.PublicKey]:
-        """承诺生成 (r, R)"""
+
         r = os.urandom(32)
         R = coincurve.PublicKey.from_secret(r)
         return r, R
 
     def acom(self, R_list: List[coincurve.PublicKey]) -> Optional[coincurve.PublicKey]:
-        """承诺聚合：R_A = sum(R_i)（使用 ecdsa 点加法）"""
+
         if not R_list:
             return None
         total = None
@@ -87,7 +87,7 @@ class CRCSFastCoincurve:
         return _ecdsa_point_to_pk(total)
 
     def psign(self, sk: bytes, r: bytes, R_A: coincurve.PublicKey, msg: bytes, M: bytes) -> Tuple[int, Dict]:
-        """部分签名生成"""
+
         c_msg = self._hash_to_scalar(msg, R_A)
         sk_int = int.from_bytes(sk, 'big')
         r_int = int.from_bytes(r, 'big')
@@ -100,7 +100,7 @@ class CRCSFastCoincurve:
         return tau, D
 
     def sign(self, partials: List[Tuple[int, Dict]]) -> Tuple[int, Dict]:
-        """聚合部分签名"""
+
         tau_sum = 0
         merged_D = {}
         for tau, D in partials:
@@ -109,7 +109,7 @@ class CRCSFastCoincurve:
                 if msg not in merged_D:
                     merged_D[msg] = []
                 merged_D[msg].extend(pk_list)
-        # 去重（按公钥字节）
+
         for msg in merged_D:
             unique = []
             seen = set()
@@ -122,7 +122,7 @@ class CRCSFastCoincurve:
         return tau_sum, merged_D
 
     def apk(self, pk_list: List[coincurve.PublicKey]) -> Optional[coincurve.PublicKey]:
-        """聚合公钥 apk = sum(pk_i)"""
+
         if not pk_list:
             return None
         total = None
@@ -132,25 +132,25 @@ class CRCSFastCoincurve:
         return _ecdsa_point_to_pk(total)
 
     def _neg_point(self, pk: coincurve.PublicKey) -> coincurve.PublicKey:
-        """返回公钥的负元（-pk）"""
+
         pt = _pk_to_ecdsa_point(pk)
         neg = -pt
         return _ecdsa_point_to_pk(neg)
 
     def _scalar_mult(self, scalar: int, point: Optional[coincurve.PublicKey] = None) -> coincurve.PublicKey:
-        """标量乘法：scalar * G 或 scalar * point"""
+
         if point is None:
-            # 标量乘生成元：私钥为 scalar 时公钥即为 scalar * G
+
             sk_bytes = scalar.to_bytes(32, 'big')
             return coincurve.PublicKey.from_secret(sk_bytes)
         else:
-            # 标量乘任意点：使用 ecdsa 库
+
             pt = _pk_to_ecdsa_point(point)
             res = scalar * pt
             return _ecdsa_point_to_pk(res)
 
     def _add_points(self, p1: Optional[coincurve.PublicKey], p2: Optional[coincurve.PublicKey]) -> Optional[coincurve.PublicKey]:
-        """点加法"""
+   
         if p1 is None:
             return p2
         if p2 is None:
@@ -160,18 +160,16 @@ class CRCSFastCoincurve:
         return _ecdsa_point_to_pk(pt1 + pt2)
 
     def vrfy(self, apk: Optional[coincurve.PublicKey], alpha: Tuple[int, Dict], M: bytes, R_A: Optional[coincurve.PublicKey], S_perp: List[coincurve.PublicKey]) -> Tuple[bool, Dict]:
-        """验证聚合签名"""
+
         tau, D_dict = alpha
-        # 计算 apk_M = apk - sum(S_perp) - sum(D_dict中的所有公钥)
         apk_M = apk
         for pk in S_perp:
             apk_M = self._add_points(apk_M, self._neg_point(pk))
         for pk_list in D_dict.values():
             for pk in pk_list:
                 apk_M = self._add_points(apk_M, self._neg_point(pk))
-        # 左侧：tau * G
+
         left = self._scalar_mult(tau)
-        # 右侧：R_A + c_M * apk_M + sum(c_msg * sum(pk_in_msg))
         right = R_A
         c_M = self._hash_to_scalar(M, R_A)
         if apk_M is not None:
@@ -183,11 +181,11 @@ class CRCSFastCoincurve:
                 sum_pk = pk if sum_pk is None else self._add_points(sum_pk, pk)
             if sum_pk is not None:
                 right = self._add_points(right, self._scalar_mult(c_msg, sum_pk))
-        # 比较左右两点（使用压缩格式比较）
+
         valid = (left.format(compressed=True) == right.format(compressed=True))
         return valid, D_dict
 
-# ------------------------------ 2. 聚合树节点 ------------------------------
+
 class TreeNode:
     __slots__ = ('id', 'parent', 'children', 'is_aggregator', 'sk', 'pk', 'config',
                  'good_bf', 'r', 'R', 'R_A', 'challenge', 'token', 'nonce')
@@ -208,7 +206,6 @@ class TreeNode:
         self.nonce = None
 
 def build_quadtree(num_leaves: int, branch_factor: int = 4):
-    """构建满四叉树，叶子节点数为 branch_factor ** depth，不小于 num_leaves"""
     depth = math.ceil(math.log(num_leaves, branch_factor))
     counter = 0
     def build(level, parent):
@@ -228,7 +225,6 @@ def build_quadtree(num_leaves: int, branch_factor: int = 4):
     return root
 
 def assign_keys_and_configs_parallel(root, good_bf, crcs, mal_ratio=0.3, max_workers=None):
-    """并行生成叶子节点的密钥和配置（使用线程池）"""
     leaves = []
     def collect_leaves(node):
         if not node.is_aggregator:
@@ -260,7 +256,6 @@ def broadcast_challenge(node, challenge):
         broadcast_challenge(ch, challenge)
 
 def collect_commitments_parallel(root, crcs, max_workers=None):
-    """并行收集叶子承诺，然后顺序聚合内部节点"""
     leaves = []
     def collect_leaves(node):
         if not node.is_aggregator:
@@ -270,7 +265,7 @@ def collect_commitments_parallel(root, crcs, max_workers=None):
                 collect_leaves(ch)
     collect_leaves(root)
 
-    # 并行生成叶子承诺
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(crcs.cgen): leaf for leaf in leaves}
         for future in as_completed(futures):
@@ -279,7 +274,7 @@ def collect_commitments_parallel(root, crcs, max_workers=None):
             leaf.r = r
             leaf.R = R
 
-    # 自底向上聚合（顺序）
+
     def aggregate(node):
         if not node.is_aggregator:
             return node.R
@@ -306,7 +301,7 @@ def set_token_and_nonce(node, token, nonce):
         set_token_and_nonce(ch, token, nonce)
 
 def collect_partial_signatures_parallel(root, M, crcs, max_workers=None):
-    """并行生成叶子部分签名，然后顺序聚合内部节点"""
+
     leaves = []
     def collect_leaves(node):
         if not node.is_aggregator:
@@ -316,7 +311,7 @@ def collect_partial_signatures_parallel(root, M, crcs, max_workers=None):
                 collect_leaves(ch)
     collect_leaves(root)
 
-    # 并行生成叶子部分签名
+
     def leaf_sign(leaf):
         good_bf = leaf.good_bf
         config = leaf.config
@@ -336,7 +331,7 @@ def collect_partial_signatures_parallel(root, M, crcs, max_workers=None):
             leaf = futures[future]
             leaf_partials[leaf] = future.result()
 
-    # 自底向上聚合（顺序）
+
     def aggregate(node):
         if not node.is_aggregator:
             return [leaf_partials[node]]
@@ -347,7 +342,7 @@ def collect_partial_signatures_parallel(root, M, crcs, max_workers=None):
             tau_agg, D_agg = crcs.sign(child_partials)
             return [(tau_agg, D_agg)]
         return []
-    return aggregate(root)[0]  # 根节点返回聚合签名 (tau, D)
+    return aggregate(root)[0]  
 
 def collect_public_keys(node, out_list):
     if not node.is_aggregator:
@@ -356,7 +351,7 @@ def collect_public_keys(node, out_list):
         for ch in node.children:
             collect_public_keys(ch, out_list)
 
-# ------------------------------ 3. 协议主函数 ------------------------------
+
 def initialize_protocol(num_leaves, branch, mal_ratio, good_configs_list=None, max_workers=None):
     crcs = CRCSFastCoincurve()
     if good_configs_list is None:
@@ -369,7 +364,7 @@ def initialize_protocol(num_leaves, branch, mal_ratio, good_configs_list=None, m
     all_pks = []
     collect_public_keys(root, all_pks)
     apk = crcs.apk(all_pks)
-    # 序列化 apk 为字节（用于令牌）
+
     apk_bytes = crcs._point_to_bytes(apk, compressed=False)
     device_ids = [f"dev_{i}" for i in range(num_leaves)]
     owner = NetworkOwner()
@@ -410,10 +405,10 @@ def run_online_attestation(ctx, verbose=False, return_metrics=False, max_workers
     end_time = time.time()
     elapsed_ms = (end_time - start_time) * 1000.0
     valid, result_D = crcs.vrfy(apk, (tau_agg, D_agg), M, R_A, S_perp=[])
-    # 签名大小估算
+
     sig_size = 32  # tau
     for msg, pk_list in D_agg.items():
-        sig_size += len(msg) + len(pk_list) * 33  # 压缩公钥 33 字节
+        sig_size += len(msg) + len(pk_list) * 33  
     anomalous_count = sum(len(pks) for pks in result_D.values()) if valid else 0
     if verbose:
         print(f"Verification result: {valid}")
@@ -436,7 +431,7 @@ def run_full_attestation(num_leaves=16, branch=4, mal_ratio=0.3, verbose=True, r
     init_start = time.time()
     ctx = initialize_protocol(num_leaves, branch, mal_ratio, max_workers=max_workers)
     init_time = (time.time() - init_start) * 1000.0
-    ctx['init_time_ms'] = init_time   # 存储以便返回
+    ctx['init_time_ms'] = init_time   
     online_result = run_online_attestation(ctx, verbose=False, return_metrics=True, max_workers=max_workers)
     if verbose:
         print(f"Initialization time: {init_time:.2f} ms")
