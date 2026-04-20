@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-# benchmark_storage.py - 测量每设备存储和总存储（轻量级数据大小）
+
 
 import csv
 import os
 from legacy.opera_protocol_ecdsa import initialize_protocol
 
 def measure_lightweight_storage(ctx):
-    """
-    测量所有叶子节点的关键数据大小（字节）
-    只计算实际密码学数据，不计 Python 对象开销
-    """
+
     root = ctx['root']
     crcs = ctx['crcs']
-    good_bf = ctx['good_bf']  # 共享的布隆过滤器，不计入每个设备
+    good_bf = ctx['good_bf']  
     leaf_sizes = []
     total_devices = 0
 
@@ -21,16 +18,14 @@ def measure_lightweight_storage(ctx):
         if not node.is_aggregator:
             total_devices += 1
             size = 0
-            # 私钥 sk: 256 位整数，通常 32 字节
+            
             size += 32
-            # 公钥 pk: 未压缩点 (x,y) 各 32 字节，共 64 字节；若压缩则为 33 字节
-            # 论文中未指定，这里采用未压缩 64 字节以匹配常见实现
+            
             size += 64
-            # 配置 config: 实际存储的字节串长度
+            
             if node.config:
                 size += len(node.config)
-            # 注意：good_bf 是共享的，不计入每设备
-            # 其他字段（如 r, R, challenge, token, nonce）是临时变量，不应计入持久存储
+            
             leaf_sizes.append(size)
         else:
             for ch in node.children:
